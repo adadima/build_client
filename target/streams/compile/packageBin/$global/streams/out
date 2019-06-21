@@ -1,0 +1,19 @@
+[0m[[0m[0minfo[0m] [0m[0mPackaging /home/alexandra/build-client/target/scala-2.12/build_client_2.12-0.1.jar ...[0m
+[0m[[0m[0mdebug[0m] [0m[0mInput file mappings:[0m
+[0m[[0m[0mdebug[0m] [0m[0m	MainBuildClient$delayedInit$body.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/MainBuildClient$delayedInit$body.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	build_client/TestBuildClient.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/build_client/TestBuildClient.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	build_client[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/build_client[0m
+[0m[[0m[0mdebug[0m] [0m[0m	ServerInformation$.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/ServerInformation$.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	MainBuildClient.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/MainBuildClient.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	MainBuildClient$.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/MainBuildClient$.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	ServerInformation.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/ServerInformation.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	BspServer.class[0m
+[0m[[0m[0mdebug[0m] [0m[0m	  /home/alexandra/build-client/target/scala-2.12/classes/BspServer.class[0m
+[0m[[0m[0minfo[0m] [0m[0mDone packaging.[0m
