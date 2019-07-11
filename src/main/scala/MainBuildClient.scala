@@ -43,7 +43,6 @@ object MainBuildClient extends App {
   val build_client = new TestBuildClient
 
   val file = Source.fromFile(os.list(os.pwd / ".bsp").head.toNIO.toFile)
-
   var canCompile = false
   var canRun = false
   var canTest = false
@@ -111,7 +110,9 @@ object MainBuildClient extends App {
 
         case "run" =>
           if (canRun) {
+            println(canRunTargets)
             for (runTarget <- canRunTargets) {
+              println("RunResult: " + run(runTarget).get())
               assertRunResult(run(runTarget).get())
             }
             println(Console.WHITE + "Running OK")
@@ -119,12 +120,19 @@ object MainBuildClient extends App {
 
         case "test" =>
           if (canTest) {
-            for (runTarget <- canRunTargets) {
-              assertRunResult(run(runTarget).get())
+            for (testTarget <- canTestTargets) {
+              println("TestResult: " + test(testTarget).get())
+              assertTestResult(test(testTarget).get())
             }
             println(Console.WHITE + "Testing OK")
           } else println(Console.WHITE + "Your server does not have test capabilities")
 
+        case "scala-main" =>
+          val params = new ScalaMainClassesParams(allTargets.map(target => target.getId).asJava)
+          println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaMainClasses(params).get)
+        case "scala-test" =>
+          val params = new ScalaTestClassesParams(allTargets.map(target => target.getId).asJava)
+          println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaTestClasses(params).get)
         case "clean-cache" =>
           for (cleanTarget <- allTargets) {
             assertCleanCacheResult(cleanCache(cleanTarget).get)
@@ -142,7 +150,7 @@ object MainBuildClient extends App {
 
         case "inverse-sources" =>
           println(buildServer.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(
-            "/home/alexandra/mill_exercise/mill_exercise/src/Bill.scala"
+            "file:///home/alexandra/mill/scratch/foo/src/FooMain.scala"
           ))).get)
 
         case "scalac-options" =>
@@ -189,8 +197,8 @@ object MainBuildClient extends App {
 
     val launcher = new Launcher.Builder[BspServer]()
       .setRemoteInterface(classOf[BspServer])
-      .setInput(inStream)
-      .setOutput(outStream)
+      .setInput(inS)
+      .setOutput(outS)
       .setLocalService(client)
       .create()
     launcher.startListening()
@@ -282,12 +290,14 @@ object MainBuildClient extends App {
     println("Task starts: ", build_client.taskStarts)
     println("Task finishes: ", build_client.taskFinishes)
     println("Compile report: ", build_client.compileReports)
+    println("Compile diagnostics: ", build_client.diagnostics)
     uniqueTargetid = uniqueTargetid + 1
   }
 
   def run(runTarget: BuildTarget): CompletableFuture[RunResult] = {
     val runParams = new RunParams(runTarget.getId)
     runParams.setOriginId(uniqueTargetid.toString)
+    runParams.setArguments(List("help").asJava)
     buildServer.buildTargetRun(runParams)
   }
 
@@ -309,6 +319,7 @@ object MainBuildClient extends App {
       message = "The origin id assigned by the client was not transmitted back correctly, got: " + result.getOriginId +
         "but expected : " + uniqueTargetid.toString)
     uniqueTargetid = uniqueTargetid + 1
+    println("Compile report: ", build_client.testReports)
   }
 
   def cleanCache(cleanTarget: BuildTarget): CompletableFuture[CleanCacheResult] = {
@@ -317,6 +328,7 @@ object MainBuildClient extends App {
   }
 
   def assertCleanCacheResult(result: CleanCacheResult): Unit = {
+    println("message: " + result.getMessage)
     assert( result.getCleaned, message = "The server reported that the cache was not cleaned")
   }
 
