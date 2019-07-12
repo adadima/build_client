@@ -64,7 +64,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
     }
 
     private[this] def getUri(relativePath: String): String = {
-      new File(path).toPath.resolve(relativePath).toAbsolutePath.toUri.toString
+      new File(path).toPath.resolve(relativePath).toUri.toString
     }
 
     private[this] def assertMillExercise(target: BuildTarget): Unit = {
@@ -116,6 +116,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       )).get
     }
 
+    //TODO: see if main classes can be retrieved even if compilation fails
     test("verifying that build targets are constructed properly in mill_exercise") {
       val buildTargets = server.workspaceBuildTargets().get.getTargets.asScala
       assert(buildTargets.length == 3, "Incorrect number of targets")
@@ -227,7 +228,6 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
                                                expEndChar: Int, expCode: String,
                                                expDiagnosticNum: Int,
                                                originId: String): Unit = {
-      println(client.diagnostics)
       assert(client.diagnostics.filter(p => p.getBuildTarget == targetId && p.getOriginId == originId).
                         exists(p => p.getTextDocument.getUri == expSourceFile &&
                                     p.getDiagnostics.asScala.
@@ -237,8 +237,8 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
                                                   d.getRange.getStart.getCharacter == expStartChar &&
                                                   d.getRange.getEnd.getLine == expEndLine &&
                                                   d.getRange.getEnd.getCharacter == expEndChar)),
-        "diagnostic was not recorded by the client")
-      assert(client.diagnostics.size == expDiagnosticNum, "incorrect number of diagnostics")
+       "diagnostic was not recorded by the client")
+      assert(client.diagnostics.count(d => d.getBuildTarget == targetId) == expDiagnosticNum, "incorrect number of diagnostics")
     }
 
     test("testing compilation - compiling error") {
@@ -247,14 +247,27 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       val result = server.buildTargetCompile(compileParams).get
       assertPublishDiagnostics(mill_exercise, DiagnosticSeverity.ERROR,
                               getUri("mill_exercise/src/AddFile.scala"),
-                              6, 6, 85, 85, "    true", 1, "1000")
+                              6, 6, 85, 85, "    true", 2, "1000")
       assert(result.getOriginId == "1000", "originId was not set correctly")
       assert(result.getStatusCode == StatusCode.ERROR, "incorrect status code")
     }
 
-    test("testing compilation - compiling warning and info") {
+    test("testing compilation with no `unused` compilation argument") {
       val compileParams = new CompileParams(List(random).asJava)
       compileParams.setOriginId("10")
+      val result = server.buildTargetCompile(compileParams).get
+      assertPublishDiagnostics(random, DiagnosticSeverity.INFORMATION,
+        getUri("random/"),
+        0, 0, 0, 0, "", 1, "10"
+      )
+      assert(result.getOriginId == "10", "originId was not set correctly")
+      assert(result.getStatusCode == StatusCode.OK, "incorrect status code")
+    }
+
+    test("testing compilation - compiling warning and info - with given `unused` argument") {
+      val compileParams = new CompileParams(List(random).asJava)
+      compileParams.setOriginId("10")
+      compileParams.setArguments(List("-Ywarn-unused").asJava)
       val result = server.buildTargetCompile(compileParams).get
       println(client.diagnostics)
       assertPublishDiagnostics(random, DiagnosticSeverity.WARNING,
@@ -264,7 +277,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
         getUri("random/src/main/scala/RandomClass.scala"),
         1, 1, 0, 7, "import ch.epfl.scala.bsp4j._", 3, "10")
       assertPublishDiagnostics(random, DiagnosticSeverity.INFORMATION,
-        getUri("random/src/main/scala/RandomClass.scala"),
+        getUri("random/"),
         0, 0, 0, 0, "", 3, "10"
         )
       assert(result.getOriginId == "10", "originId was not set correctly")
