@@ -67,9 +67,7 @@ object MainBuildClient extends App {
 
   println(process.isAlive)
   println(buildServer.getClass)
-  val allTargets = buildServer.workspaceBuildTargets().get().getTargets.asScala.toList
-  println("Got targets")
-  println(buildServer.buildTargetSources(new SourcesParams(allTargets.map(target => target.getId).asJava)).get)
+  var allTargets: List[BuildTarget] = _
   var canCompileTargets = Seq.empty[BuildTarget]
   var canRunTargets = Seq.empty[BuildTarget]
   var canTestTargets = Seq.empty[BuildTarget]
@@ -86,6 +84,9 @@ object MainBuildClient extends App {
         case "initialize" =>
           val result = initialize().get()
           setServerCapabilities(result)
+          println(allTargets)
+          allTargets = buildServer.workspaceBuildTargets().get().getTargets.asScala.toList
+          println(allTargets)
           filterTargets(allTargets)
           assertInitializeResult(result)
           println(Console.WHITE + "Server initialization OK")
@@ -319,7 +320,8 @@ object MainBuildClient extends App {
       message = "The origin id assigned by the client was not transmitted back correctly, got: " + result.getOriginId +
         "but expected : " + uniqueTargetid.toString)
     uniqueTargetid = uniqueTargetid + 1
-    println("Compile report: ", build_client.testReports)
+    println("Task Starts: " + build_client.taskStarts)
+    println("Task Finished: " + build_client.taskFinishes)
   }
 
   def cleanCache(cleanTarget: BuildTarget): CompletableFuture[CleanCacheResult] = {

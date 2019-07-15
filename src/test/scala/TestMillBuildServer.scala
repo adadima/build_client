@@ -1,5 +1,6 @@
 import java.io.File
 import java.nio.file.Path
+import java.util.concurrent.ExecutionException
 
 import build_client.TestBuildClient
 import ch.epfl.scala.bsp4j.{BuildClientCapabilities, BuildServer, BuildServerCapabilities, BuildTarget, BuildTargetCapabilities, BuildTargetIdentifier, CleanCacheParams, CompileParams, DependencySourcesParams, DiagnosticSeverity, InitializeBuildParams, InitializeBuildResult, InverseSourcesParams, ResourcesParams, RunParams, ScalaBuildServer, ScalaBuildTarget, ScalaPlatform, SourceItem, SourceItemKind, SourcesParams, StatusCode, TestParams, TextDocumentIdentifier}
@@ -83,7 +84,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       assert(target.getBaseDirectory == getUri("mill_exercise/test/"),
         "incorrect base directory")
       assert(target.getDisplayName == "test", "incorrect display name")
-      assert(target.getCapabilities == new BuildTargetCapabilities(true, true, false),
+      assert(target.getCapabilities == new BuildTargetCapabilities(true, true, true),
         "incorrect capabilities for this target")
       assert(target.getLanguageIds.contains("scala") && target.getLanguageIds.contains("java"),
         "does not support both languages scala and java")
@@ -148,16 +149,15 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       "and that initialization occurs") {
       val server = establishServerConnection(serverCommand).asInstanceOf[BuildServer with ScalaBuildServer]
       Thread.sleep(500)
-      assertThrows(server.workspaceBuildTargets())
-      assertThrows(server.buildTargetCleanCache(new CleanCacheParams(List().asJava)))
-      assertThrows(server.buildTargetCompile(new CompileParams(List().asJava)))
-      assertThrows(server.buildTargetSources(new SourcesParams(List().asJava)))
-      assertThrows(server.buildTargetResources(new ResourcesParams(List().asJava)))
-      assertThrows(server.buildTargetDependencySources(new DependencySourcesParams(List().asJava)))
-      assertThrows(server.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(""))))
-      assertThrows(server.buildTargetRun(new RunParams(new BuildTargetIdentifier(""))))
-      assertThrows(server.buildTargetTest(new TestParams(List().asJava)))
-      server.onBuildExit()
+      assertThrows[ExecutionException](server.workspaceBuildTargets().get)
+      assertThrows[ExecutionException](server.buildTargetCleanCache(new CleanCacheParams(List().asJava)).get)
+      assertThrows[ExecutionException](server.buildTargetCompile(new CompileParams(List().asJava)).get)
+      assertThrows[ExecutionException](server.buildTargetSources(new SourcesParams(List().asJava)).get)
+      assertThrows[ExecutionException](server.buildTargetResources(new ResourcesParams(List().asJava)).get)
+      assertThrows[ExecutionException](server.buildTargetDependencySources(new DependencySourcesParams(List().asJava)).get)
+      assertThrows[ExecutionException](server.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(""))).get)
+      assertThrows[ExecutionException](server.buildTargetRun(new RunParams(new BuildTargetIdentifier(""))).get)
+      assertThrows[ExecutionException](server.buildTargetTest(new TestParams(List().asJava)).get)
       assertInitialize(server)
       server.onBuildInitialized()
       server.buildShutdown()
