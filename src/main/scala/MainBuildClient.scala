@@ -1,18 +1,16 @@
-import build_client.TestBuildClient
-import java.io.{File, InputStream, OutputStream}
+import java.io.{File, FileWriter, InputStream, OutputStream, PrintWriter}
 import java.util
+import java.util.Collections
 import java.util.concurrent.CompletableFuture
 
-import play.api.libs.json._
-import java.util.Collections
-
+import build_client.TestBuildClient
 import ch.epfl.scala.bsp4j._
 import org.eclipse.lsp4j.jsonrpc.Launcher
+import play.api.libs.json._
+import scopt.OParser
 
-import collection.JavaConverters._
+import scala.collection.JavaConverters._
 import scala.io.Source
-import os._
-
 
 trait BspServer extends BuildServer with ScalaBuildServer
 
@@ -20,7 +18,11 @@ case class ServerInformation(serverName: String,
                              serverVersion: String,
                              serverBspVersion: String,
                              serverLanguages: Seq[String],
-                             serverStartCommand: String)
+                             serverStartCommand: List[String])
+
+
+case class CLIConfig(projectDir: File,
+                     logFile: Option[File])
 
 /**
   * Main class for running a build client. Command line arguments
@@ -39,10 +41,15 @@ case class ServerInformation(serverName: String,
   */
 object MainBuildClient extends App {
 
+  val config = parseArgs()
   var uniqueTargetid = 0
   val build_client = new TestBuildClient
 
-  val file = Source.fromFile(os.list(os.pwd / ".bsp").head.toNIO.toFile)
+  val file = new File(config.projectDir, ".bsp").listFiles().find(f => f.getName.endsWith(".json"))
+    .map(f => {
+      println(s"Picked config file ${f.getAbsolutePath}")
+      Source.fromFile(f)
+    }).getOrElse(throw new RuntimeException("Could not find any *.json file"))
   var canCompile = false
   var canRun = false
   var canTest = false
@@ -51,7 +58,10 @@ object MainBuildClient extends App {
   file.close()
   val serverInfo = getServerInformation(jsonResult)
   println("Command: " + serverInfo.serverStartCommand)
-  val process = Runtime.getRuntime.exec(serverInfo.serverStartCommand, null)
+  val process = new ProcessBuilder()
+    .command(serverInfo.serverStartCommand.asJava)
+    .directory(config.projectDir)
+    .start()
   println("Started process")
   val inStream = process.getInputStream
   val outStream = process.getOutputStream
@@ -80,105 +90,134 @@ object MainBuildClient extends App {
     val request = scala.io.StdIn.readLine()
 
     try {
-      request match {
-        case "initialize" =>
-          val result = initialize().get()
-          setServerCapabilities(result)
-          println(allTargets)
-          allTargets = buildServer.workspaceBuildTargets().get().getTargets.asScala.toList
-          println(allTargets)
-          filterTargets(allTargets)
-          assertInitializeResult(result)
-          println(Console.WHITE + "Server initialization OK")
-
-        case "initialized" =>
-          buildServer.onBuildInitialized()
-          println(Console.WHITE + "Server initialized OK")
-
-        case "build-targets" =>
-          for (target <- allTargets) {
-            println(Console.WHITE+ "Target: " + target + " \n")
-          }
-
-        case "compile" =>
-
-          if (canCompile) {
-            for (compileTarget <- canCompileTargets) {
-              assertCompileResult(compile(compileTarget).get())
-            }
-            println(Console.WHITE + "Compilation OK")
-          } else "Your server does not have compile capabilities"
-
-        case "run" =>
-          if (canRun) {
-            println(canRunTargets)
-            for (runTarget <- canRunTargets) {
-              println("RunResult: " + run(runTarget).get())
-              assertRunResult(run(runTarget).get())
-            }
-            println(Console.WHITE + "Running OK")
-          } else println(Console.WHITE + "Your server does not have run capabilities")
-
-        case "test" =>
-          if (canTest) {
-            for (testTarget <- canTestTargets) {
-              println("TestResult: " + test(testTarget).get())
-              assertTestResult(test(testTarget).get())
-            }
-            println(Console.WHITE + "Testing OK")
-          } else println(Console.WHITE + "Your server does not have test capabilities")
-
-        case "scala-main" =>
-          val params = new ScalaMainClassesParams(allTargets.map(target => target.getId).asJava)
-          println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaMainClasses(params).get)
-        case "scala-test" =>
-          val params = new ScalaTestClassesParams(allTargets.map(target => target.getId).asJava)
-          println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaTestClasses(params).get)
-        case "clean-cache" =>
-          for (cleanTarget <- allTargets) {
-            assertCleanCacheResult(cleanCache(cleanTarget).get)
-          }
-          println(Console.WHITE + "Clean cache OK")
-
-        case "dependencies" =>
-          for (target <- allTargets) {
-            val depend = assertDependencies(dependencies(target).get(), target.getId)
-            println("Fetching dependencies: " + depend.mkString("\n") + " OK")
-          }
-
-        case "sources" =>
-          println(buildServer.buildTargetSources(new SourcesParams(allTargets.map(target => target.getId).asJava)).get)
-
-        case "inverse-sources" =>
-          println(buildServer.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(
-            "file:///home/alexandra/mill/scratch/foo/src/FooMain.scala"
-          ))).get)
-
-        case "scalac-options" =>
-          println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalacOptions(
-            new ScalacOptionsParams(allTargets.map(target => target.getId).asJava)
-          ).get)
-
-        case "target-source" =>
-          assertTargetSourceRelation()
-          println(Console.WHITE + "Targets - Source correlation OK")
-
-        case "shutdown" =>
-          buildServer.buildShutdown()
-          assert(process.isAlive, message = "The server should not die before sending the response to the shutdown request")
-          println(Console.WHITE + "Server shutdown OK - the server did not stop yet, needs to wait for exit notification")
-
-        case "exit" =>
-          buildServer.onBuildExit()
-          Thread.sleep(1000)
-          assert(!process.isAlive, message = "The server should stop after receiving the exit notification from the client")
-          println(Console.WHITE + "Server exit OK - the server stopped")
-
-        case _ => println(Console.WHITE + "Not a valid command, try again")
-      }
+      execCommand(request)
     } catch {
       case exp: Error => println(Console.RED + "An exception/error occurred: " + exp.getMessage + " " + exp.getStackTrace.toString)
     }
+  }
+
+
+  def parseArgs(): CLIConfig = {
+    val cliBuilder = OParser.builder[CLIConfig]
+    val cliArgParser = {
+      import cliBuilder._
+      OParser.sequence(
+        programName("BSP Test Build Client"),
+        opt[File]('p', "project-path")
+          .required()
+          .action((x, c) => c.copy(projectDir = x))
+          .text("Project working directory"),
+        opt[File]('l', "logfile")
+          .optional()
+          .action((x, c) => c.copy(logFile = Some(x)))
+          .text("Bsp trace log file")
+      )
+    }
+
+    OParser.parse(cliArgParser, args, CLIConfig(new File("."), None)) match {
+      case Some(x) => x
+      case None =>
+        System.exit(1)
+        null
+    }
+  }
+
+  def execCommand(request: String): Unit = request match {
+    case "initialize" =>
+      val result = initialize().get()
+      setServerCapabilities(result)
+      println(allTargets)
+      allTargets = buildServer.workspaceBuildTargets().get().getTargets.asScala.toList
+      println(allTargets)
+      filterTargets(allTargets)
+      assertInitializeResult(result)
+      println(Console.WHITE + "Server initialization OK")
+
+    case "initialized" =>
+      buildServer.onBuildInitialized()
+      println(Console.WHITE + "Server initialized OK")
+
+    case "build-targets" =>
+      for (target <- allTargets) {
+        println(Console.WHITE + "Target: " + target + " \n")
+      }
+
+    case "compile" =>
+
+      if (canCompile) {
+        for (compileTarget <- canCompileTargets) {
+          assertCompileResult(compile(compileTarget).get())
+        }
+        println(Console.WHITE + "Compilation OK")
+      } else println("Your server does not have compile capabilities")
+
+    case "run" =>
+      if (canRun) {
+        println(canRunTargets)
+        for (runTarget <- canRunTargets) {
+          println("RunResult: " + run(runTarget).get())
+          assertRunResult(run(runTarget).get())
+        }
+        println(Console.WHITE + "Running OK")
+      } else println(Console.WHITE + "Your server does not have run capabilities")
+
+    case "test" =>
+      if (canTest) {
+        for (testTarget <- canTestTargets) {
+          println("TestResult: " + test(testTarget).get())
+          assertTestResult(test(testTarget).get())
+        }
+        println(Console.WHITE + "Testing OK")
+      } else println(Console.WHITE + "Your server does not have test capabilities")
+
+    case "scala-main" =>
+      val params = new ScalaMainClassesParams(allTargets.map(target => target.getId).asJava)
+      println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaMainClasses(params).get)
+    case "scala-test" =>
+      val params = new ScalaTestClassesParams(allTargets.map(target => target.getId).asJava)
+      println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaTestClasses(params).get)
+    case "clean-cache" =>
+      for (cleanTarget <- allTargets) {
+        assertCleanCacheResult(cleanCache(cleanTarget).get)
+      }
+      println(Console.WHITE + "Clean cache OK")
+
+    case "dependencies" =>
+      for (target <- allTargets) {
+        val depend = assertDependencies(dependencies(target).get(), target.getId)
+        println("Fetching dependencies: " + depend.mkString("\n") + " OK")
+      }
+
+    case "sources" =>
+      println(buildServer.buildTargetSources(new SourcesParams(allTargets.map(target => target.getId).asJava)).get)
+
+    case "inverse-sources" =>
+      println(buildServer.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(
+        "file:///home/alexandra/mill/scratch/foo/src/FooMain.scala"
+      ))).get)
+
+    case "scalac-options" =>
+      println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalacOptions(
+        new ScalacOptionsParams(allTargets.map(target => target.getId).asJava)
+      ).get)
+
+    case "target-source" =>
+      assertTargetSourceRelation()
+      println(Console.WHITE + "Targets - Source correlation OK")
+
+    case "shutdown" =>
+      buildServer.buildShutdown()
+      assert(process.isAlive, message = "The server should not die before sending the response to the shutdown request")
+      println(Console.WHITE + "Server shutdown OK - the server did not stop yet, needs to wait for exit notification")
+
+    case "exit" =>
+      buildServer.onBuildExit()
+      Thread.sleep(1000)
+      assert(!process.isAlive, message = "The server should stop after receiving the exit notification from the client")
+      println(Console.WHITE + "Server exit OK - the server stopped")
+
+    case _ => println(Console.WHITE + "Not a valid command, try again")
+
   }
 
   // return a tuple of the server display name, server version, bsp version and language capabilities
@@ -189,7 +228,7 @@ object MainBuildClient extends App {
     val version = (jsValConnection \\ "version").head.as[String]
     val bspVersion = (jsValConnection \\ "bspVersion").head.as[String]
     val languages = (jsValConnection \\ "languages").map(jsVal => jsVal.as[List[String]]).head
-    val command = (jsValConnection \\ "argv").map(jsVal => jsVal.as[List[String]]).head.mkString(" ")
+    val command = (jsValConnection \\ "argv").map(jsVal => jsVal.as[List[String]]).head
     ServerInformation(displayname, version, bspVersion, languages, command)
 
   }
@@ -201,6 +240,7 @@ object MainBuildClient extends App {
       .setInput(inS)
       .setOutput(outS)
       .setLocalService(client)
+      .traceMessages(config.logFile.map(f => new PrintWriter(new FileWriter(f, true))).orNull)
       .create()
     launcher.startListening()
     val bspServer = launcher.getRemoteProxy
@@ -261,17 +301,17 @@ object MainBuildClient extends App {
       message = "The server version was not transmitted correctly: " + result.getVersion + s" but should be $serverVersion" )
 
     if ( canCompile ) {
-      assert (result.getCapabilities.getCompileProvider.getLanguageIds.asScala == serverLanguages.toList,
+      assert(result.getCapabilities.getCompileProvider.getLanguageIds.asScala.toSet == serverLanguages.toSet,
         message = "The supported languages for compilation  are not as in the connection file")
     }
 
     if ( canRun ) {
-      assert (result.getCapabilities.getRunProvider.getLanguageIds.asScala == serverLanguages.toList,
+      assert (result.getCapabilities.getRunProvider.getLanguageIds.asScala.toSet == serverLanguages.toSet,
         message = "The supported languages for testing are not as in the connection file")
     }
 
     if ( canTest ) {
-      assert (result.getCapabilities.getTestProvider.getLanguageIds.asScala == serverLanguages.toList,
+      assert (result.getCapabilities.getTestProvider.getLanguageIds.asScala.toSet == serverLanguages.toSet,
         message = "The supported languages for running are not as in the connection file")
     }
   }
