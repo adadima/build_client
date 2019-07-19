@@ -1,4 +1,4 @@
-import java.io.{File, FileWriter, InputStream, OutputStream, PrintWriter}
+import java.io.{BufferedReader, File, FileWriter, InputStream, InputStreamReader, OutputStream, PrintWriter}
 import java.util
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
@@ -57,18 +57,17 @@ object MainBuildClient extends App {
   val jsonResult = file.mkString("")
   file.close()
   val serverInfo = getServerInformation(jsonResult)
-  println("Command: " + serverInfo.serverStartCommand)
   val process = new ProcessBuilder()
     .command(serverInfo.serverStartCommand.asJava)
     .directory(config.projectDir)
     .start()
-  println("Started process")
   val inStream = process.getInputStream
   val outStream = process.getOutputStream
   val errStream = process.getErrorStream
-  println("Got streams")
-  //println(Source.fromInputStream(errStream).getLines().mkString("\n"))
-  //println("Read from streams")
+
+  println(s"Started process with command ${serverInfo.serverStartCommand}")
+  new Thread(() => printErrStream()).start()
+
   val buildServer = generateBuildServer(build_client, inStream, outStream)
   val serverName = serverInfo.serverName
   val serverVersion = serverInfo.serverVersion
@@ -85,14 +84,25 @@ object MainBuildClient extends App {
 
   println(Console.WHITE + "Started process and got streams")
   println(allTargets)
-  while ( true ) {
-
+  while (process.isAlive) {
     val request = scala.io.StdIn.readLine()
-
     try {
       execCommand(request)
     } catch {
-      case exp: Error => println(Console.RED + "An exception/error occurred: " + exp.getMessage + " " + exp.getStackTrace.toString)
+      case exp: Throwable => exp.printStackTrace()
+    }
+  }
+  println(s"Child process exited with value ${process.exitValue()}")
+
+
+  def printErrStream(): Unit = {
+    val br = new BufferedReader(new InputStreamReader(this.errStream))
+    var line: java.lang.String = null
+    while (process.isAlive && {
+      line = br.readLine()
+      line
+    } != null) {
+      System.err.println("[CHILD-STDERR] " + line)
     }
   }
 
@@ -257,7 +267,7 @@ object MainBuildClient extends App {
     val params = new InitializeBuildParams("test_client",
       "0.0.1",
       "2.0",
-      "file:/home/alexandra/build_client/",
+      "file:/" + config.projectDir.getAbsolutePath,
       new BuildClientCapabilities(supportedLanguages))
 
     buildServer.buildInitialize(params)
