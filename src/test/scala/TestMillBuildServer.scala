@@ -1,13 +1,16 @@
-import java.io.File
+import java.io.{File, FileWriter, PrintWriter}
 import java.nio.file.Path
 import java.util.concurrent.ExecutionException
 
+import MainBuildClient.config
 import build_client.TestBuildClient
-import ch.epfl.scala.bsp4j.{BuildClientCapabilities, BuildServer, BuildServerCapabilities, BuildTarget, BuildTargetCapabilities, BuildTargetIdentifier, CleanCacheParams, CompileParams, DependencySourcesParams, DiagnosticSeverity, InitializeBuildParams, InitializeBuildResult, InverseSourcesParams, ResourcesParams, RunParams, ScalaBuildServer, ScalaBuildTarget, ScalaPlatform, SourceItem, SourceItemKind, SourcesParams, StatusCode, TestParams, TextDocumentIdentifier}
+import ch.epfl.scala.bsp4j.{BuildClientCapabilities, BuildServer, BuildServerCapabilities, BuildTarget, BuildTargetCapabilities, BuildTargetIdentifier, CleanCacheParams, CompileParams, DependencySourcesParams, DiagnosticSeverity, InitializeBuildParams, InitializeBuildResult, InverseSourcesParams, ResourcesParams, RunParams, ScalaBuildServer, ScalaBuildTarget, ScalaMainClassesParams, ScalaPlatform, SourceItem, SourceItemKind, SourcesParams, StatusCode, TestParams, TextDocumentIdentifier}
 import com.google.gson.JsonObject
+import org.eclipse.lsp4j.jsonrpc.Launcher
 import org.scalatest.{BeforeAndAfterEach, BeforeAndAfterEachTestData, FunSuite, TestData}
 
 import collection.JavaConverters._
+import scala.io.Source
 
 class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
 
@@ -35,13 +38,23 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
      * - has runtime error
      * - has test failures
      */
-    val client = new TestBuildClient()
-    val path = "/home/alexandra/mill/scratch"
-    val serverCommand = Array("/home/alexandra/mill/out/dev/launcher/dest/run",
-                              "-i", "mill.contrib.MainMillBuildServer/startServer")
+    var client: TestBuildClient = _
+    val path = "/home/alexandra/mill_exercise/"
+    //val serverStartCommand = Array("../../out/dev/launcher/dest/run", "-i", "mill.contrib.BSP/start")
+    val serverStartCommand = Array(
+      "java",
+      "-DMILL_CLASSPATH=/home/alexandra/mill-release",
+      "-DMILL_VERSION=0.5.0-54-78f7e4-DIRTYb66f5b63",
+      "-Djna.nosys=true",
+      "-cp",
+      "/home/alexandra/mill-release",
+      "mill.MillMain",
+      "mill.contrib.BSP/start")
     val mill_exercise = new BuildTargetIdentifier(getUri("mill_exercise/"))
-    val test = new BuildTargetIdentifier(getUri("mill_exercise/test/"))
+    val test = new BuildTargetIdentifier(getUri("mill_exercise/mill_exercise.test"))
     val random = new BuildTargetIdentifier(getUri("random/"))
+    val foo = new BuildTargetIdentifier(getUri("foo/"))
+    val invalidTarget = new BuildTargetIdentifier(getUri("build"))
     var server: BuildServer with ScalaBuildServer = _
 
     override def afterEach: Unit = {
@@ -50,22 +63,34 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
     }
 
     override def beforeEach: Unit = {
-      server = establishServerConnection(serverCommand).asInstanceOf[BuildServer with ScalaBuildServer]
-      Thread.sleep(500)
+      client = new TestBuildClient
+      server = establishServerConnection(serverStartCommand).asInstanceOf[BuildServer with ScalaBuildServer]
       initializeServer(server)
       server.onBuildInitialized()
-      server.buildTargetCleanCache(new CleanCacheParams(List(mill_exercise, test, random).asJava))
+      server.buildTargetCleanCache(new CleanCacheParams(List(mill_exercise, test, random, foo).asJava)).get
     }
 
     private[this] def establishServerConnection(startServerCommand: Array[String]): BuildServer = {
-      val process = Runtime.getRuntime.exec(startServerCommand, null, new File(path))
-      val inStream = process.getInputStream
-      val outStream = process.getOutputStream
-      MainBuildClient.generateBuildServer(client, inStream, outStream)
+      val process2 = Runtime.getRuntime.exec(startServerCommand, null, new File(path))
+      val inStream = process2.getInputStream
+      val outStream = process2.getOutputStream
+      println(process2.isAlive)
+
+      val launcher = new Launcher.Builder[BspServer]()
+        .setRemoteInterface(classOf[BspServer])
+        .setInput(inStream)
+        .setOutput(outStream)
+        .setLocalService(client)
+        .traceMessages(new PrintWriter((os.pwd / "bsp.log").toIO))
+        .create()
+      launcher.startListening()
+      val bspServer = launcher.getRemoteProxy
+      client.onConnectWithServer(bspServer)
+      bspServer
     }
 
     private[this] def getUri(relativePath: String): String = {
-      new File(path).toPath.resolve(relativePath).toUri.toString
+      (os.Path(path) / os.RelPath(relativePath)).toIO.toURI.toString
     }
 
     private[this] def assertMillExercise(target: BuildTarget): Unit = {
@@ -83,7 +108,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
     private[this] def assertTestTarget(target: BuildTarget): Unit = {
       assert(target.getBaseDirectory == getUri("mill_exercise/test/"),
         "incorrect base directory")
-      assert(target.getDisplayName == "test", "incorrect display name")
+      assert(target.getDisplayName == "mill_exercise.test", "incorrect display name")
       assert(target.getCapabilities == new BuildTargetCapabilities(true, true, true),
         "incorrect capabilities for this target")
       assert(target.getLanguageIds.contains("scala") && target.getLanguageIds.contains("java"),
@@ -117,12 +142,11 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       )).get
     }
 
-    //TODO: see if main classes can be retrieved even if compilation fails
     test("verifying that build targets are constructed properly in mill_exercise") {
       val buildTargets = server.workspaceBuildTargets().get.getTargets.asScala
-      assert(buildTargets.length == 3, "Incorrect number of targets")
+      assert(buildTargets.length == 6, "Incorrect number of targets")
       val mill_exercise = buildTargets.filter(t => t.getDisplayName == "mill_exercise").head
-      val test = buildTargets.filter(t => t.getDisplayName == "test").head
+      val test = buildTargets.filter(t => t.getDisplayName == "mill_exercise.test").head
       assertMillExercise(mill_exercise)
       assertScalaBuildTarget(mill_exercise.getData.asInstanceOf[JsonObject])
       assertTestTarget(test)
@@ -131,7 +155,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
 
     private[this] def assertInitialize(server: BuildServer with ScalaBuildServer): Unit = {
       val initializeResult = initializeServer(server)
-      assert(initializeResult.getBspVersion == "2.0.0-M4", "wrong bsp version")
+      assert(initializeResult.getBspVersion == "2.0.0", "wrong bsp version")
       assert(initializeResult.getDisplayName == "mill-bsp")
       val compileLang = initializeResult.getCapabilities.getCompileProvider.getLanguageIds
       val runLang = initializeResult.getCapabilities.getRunProvider.getLanguageIds
@@ -147,7 +171,7 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
 
     test("verifying that no request/notification sent before initialize is successful" +
       "and that initialization occurs") {
-      val server = establishServerConnection(serverCommand).asInstanceOf[BuildServer with ScalaBuildServer]
+      val server = establishServerConnection(serverStartCommand).asInstanceOf[BuildServer with ScalaBuildServer]
       Thread.sleep(500)
       assertThrows[ExecutionException](server.workspaceBuildTargets().get)
       assertThrows[ExecutionException](server.buildTargetCleanCache(new CleanCacheParams(List().asJava)).get)
@@ -172,15 +196,13 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       val sourcesResult = server.buildTargetSources(
               new SourcesParams(getTargetIds(server).asJava)).get
       val sources = sourcesResult.getItems.asScala.flatMap(item => item.getSources.asScala)
-      assert(sources.contains(new SourceItem(getUri("mill_exercise/src/Bill.scala"), SourceItemKind.FILE,
+      assert(sources.contains(new SourceItem(getUri("mill_exercise/src/"), SourceItemKind.DIRECTORY,
         false)))
-      assert(sources.contains(new SourceItem(getUri("mill_exercise/src/Compiler.scala"), SourceItemKind.FILE,
+      assert(sources.contains(new SourceItem(getUri("mill_exercise/test/src/"), SourceItemKind.DIRECTORY,
         false)))
-      assert(sources.contains(new SourceItem(getUri("mill_exercise/src/AddFile.scala"), SourceItemKind.FILE,
+      assert(sources.contains(new SourceItem(getUri("random/src/main/scala"), SourceItemKind.DIRECTORY,
         false)))
-      assert(sources.contains(new SourceItem(getUri("mill_exercise/test/src/CompilerTest.scala"), SourceItemKind.FILE,
-        false)))
-      assert(sources.contains(new SourceItem(getUri("mill_exercise/test/src/TestmainClass.scala"), SourceItemKind.FILE,
+      assert(sources.contains(new SourceItem(getUri("foo/src/"), SourceItemKind.DIRECTORY,
         false)))
     }
 
@@ -188,14 +210,12 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       val result1 = server.buildTargetInverseSources(new InverseSourcesParams(
               new TextDocumentIdentifier(getUri("mill_exercise/test/src/CompilerTest.scala")))).get
       assert(result1.getTargets.asScala.length == 1, "incorrect number of targets for this text doc")
-      assert(result1.getTargets.asScala.head ==
-        new BuildTargetIdentifier(getUri("mill_exercise/test/")), "incorrect target for this source")
+      assert(result1.getTargets.asScala.head == test, "incorrect target for this source")
 
       val result2 = server.buildTargetInverseSources(new InverseSourcesParams(
         new TextDocumentIdentifier(getUri("mill_exercise/src/Bill.scala")))).get
       assert(result2.getTargets.asScala.length == 1, "incorrect number of targets for this text doc")
-      assert(result2.getTargets.asScala.head ==
-        new BuildTargetIdentifier(getUri("mill_exercise/")), "incorrect target for this source")
+      assert(result2.getTargets.asScala.head == mill_exercise, "incorrect target for this source")
     }
 
     test("testing resources are retrieved correctly") {
@@ -223,31 +243,35 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
     //TODO: see exactly how characters in a file are counted
     private[this] def assertPublishDiagnostics(targetId: BuildTargetIdentifier,
                                                 expSeverity: DiagnosticSeverity,
-                                               expSourceFile: String, expStartLine: Int,
-                                               expEndLine: Int, expStartChar: Int,
-                                               expEndChar: Int, expCode: String,
+                                               expSourceFile: String,
                                                expDiagnosticNum: Int,
                                                originId: String): Unit = {
       assert(client.diagnostics.filter(p => p.getBuildTarget == targetId && p.getOriginId == originId).
                         exists(p => p.getTextDocument.getUri == expSourceFile &&
                                     p.getDiagnostics.asScala.
-                                      exists(d => d.getCode == expCode &&
-                                                  d.getSeverity == expSeverity &&
-                                                  d.getRange.getStart.getLine == expStartLine &&
-                                                  d.getRange.getStart.getCharacter == expStartChar &&
-                                                  d.getRange.getEnd.getLine == expEndLine &&
-                                                  d.getRange.getEnd.getCharacter == expEndChar)),
+                                      count(d => d.getSeverity == expSeverity) == expDiagnosticNum),
        "diagnostic was not recorded by the client")
-      assert(client.diagnostics.count(d => d.getBuildTarget == targetId) == expDiagnosticNum, "incorrect number of diagnostics")
+    }
+
+    private[this] def assertProgressNotifications(moduleName: String): Unit = {
+      assert(client.taskProgresses.nonEmpty, "no progress notifications were sent.")
+      assert(client.taskProgresses.exists(
+        notification =>notification.getUnit == moduleName + ".compile"
+      ), "no notification for the compile task was sent.")
     }
 
     test("testing compilation - compiling error") {
       val compileParams = new CompileParams(List(mill_exercise).asJava)
       compileParams.setOriginId("1000")
       val result = server.buildTargetCompile(compileParams).get
+      assertProgressNotifications("mill_exercise")
+      println(client.diagnostics)
       assertPublishDiagnostics(mill_exercise, DiagnosticSeverity.ERROR,
                               getUri("mill_exercise/src/AddFile.scala"),
-                              6, 6, 85, 85, "    true", 2, "1000")
+                              1, "1000")
+      assertPublishDiagnostics(mill_exercise, DiagnosticSeverity.WARNING,
+                              getUri("mill_exercise/src/Bill.scala"),
+                              1, "1000")
       assert(result.getOriginId == "1000", "originId was not set correctly")
       assert(result.getStatusCode == StatusCode.ERROR, "incorrect status code")
     }
@@ -256,10 +280,9 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       val compileParams = new CompileParams(List(random).asJava)
       compileParams.setOriginId("10")
       val result = server.buildTargetCompile(compileParams).get
+      assertProgressNotifications("random")
       assertPublishDiagnostics(random, DiagnosticSeverity.INFORMATION,
-        getUri("random/"),
-        0, 0, 0, 0, "", 1, "10"
-      )
+        getUri("random/"), 1, "10")
       assert(result.getOriginId == "10", "originId was not set correctly")
       assert(result.getStatusCode == StatusCode.OK, "incorrect status code")
     }
@@ -269,25 +292,100 @@ class TestMillBuildServer extends FunSuite with BeforeAndAfterEach {
       compileParams.setOriginId("10")
       compileParams.setArguments(List("-Ywarn-unused").asJava)
       val result = server.buildTargetCompile(compileParams).get
-      println(client.diagnostics)
+      println(client.taskProgresses)
       assertPublishDiagnostics(random, DiagnosticSeverity.WARNING,
-        getUri("random/src/main/scala/RandomClass.scala"),
-        27, 27, 297, 297, "    case value: B => None", 3, "10")
-      assertPublishDiagnostics(random, DiagnosticSeverity.WARNING,
-        getUri("random/src/main/scala/RandomClass.scala"),
-        1, 1, 0, 7, "import ch.epfl.scala.bsp4j._", 3, "10")
+          getUri("random/src/main/scala/RandomClass.scala"), 2, "10")
       assertPublishDiagnostics(random, DiagnosticSeverity.INFORMATION,
-        getUri("random/"),
-        0, 0, 0, 0, "", 3, "10"
-        )
+          getUri("random/"), 1, "10"
+      )
+      assertProgressNotifications("random")
       assert(result.getOriginId == "10", "originId was not set correctly")
       assert(result.getStatusCode == StatusCode.OK, "incorrect status code")
     }
 
     test("testing compilation - no diagnostics") {
-
+      val compileParams = new CompileParams(List(foo).asJava)
+      compileParams.setOriginId("foo-id")
+      compileParams.setArguments(List("-Ywarn-unused").asJava)
+      val result = server.buildTargetCompile(compileParams).get
+      println(client.taskProgresses)
+      assertProgressNotifications("foo")
+      assert(client.diagnostics.isEmpty, "diagnostics were sent when there was no reason to.")
+      assert(result.getOriginId == "foo-id", "originId was not set correctly")
+      assert(result.getStatusCode == StatusCode.OK, "incorrect status code")
     }
 
+    test("testing that the scala main classes are computed correctly") {
+      val params = new ScalaMainClassesParams(List(mill_exercise, test, random, foo).asJava)
+      params.setOriginId("classes")
+      val result = server.buildTargetScalaMainClasses(params).get
+      assert(result.getItems.asScala.length == 4, "wrong number of scala main classes items.")
+      val expectedClassesArgs = Map(
+        random -> ("RandomClass", Seq("-DMILL_VERSION=0.5.0"))
+      )
+      val actualClassesArgs = ( for (item <- result.getItems.asScala.filter(i => i.getTarget != foo)
+                                     if item.getClasses.asScala.nonEmpty)
+        yield
+        (
+                    item.getTarget,
+                    (item.getClasses.asScala.head.getClassName, item.getClasses.asScala.head.getJvmOptions.asScala)
+        )).toMap
+      assert(expectedClassesArgs == actualClassesArgs, "Main classes and fork arguments were not computed" +
+        "correctly.")
+      assert(result.getItems.asScala.filter(item => item.getTarget == foo).head.getClasses.isEmpty,
+      "module foo has no main classes")
+    }
+
+    test("Testing that the cleanCache response is correct if cache was/was not cleaned") {
+      val result1 = server.buildTargetCleanCache(new CleanCacheParams(List(invalidTarget).asJava)).get
+      assert(!result1.getCleaned, "the invalid target appears to have been cleaned - this is not" +
+        "k since the target corresponds to a module that doesn't exist")
+      assert(result1.getMessage.contains("clean Cannot resolve build. Try `mill resolve _` to see what's available."),
+      "the error message was not set correctly")
+
+      val result2 = server.buildTargetCleanCache(new CleanCacheParams(List(foo).asJava)).get
+      assert(result2.getCleaned, "the server reported that foo was not cleaned.")
+      assert(result2.getMessage.contains("[1/1] clean"), "the success massage was not displayed correctly")
+    }
+
+    test("Testing the run request without parameters - status code OK") {
+      val params = new RunParams(random)
+      params.setOriginId("run")
+      val result = server.buildTargetRun(params).get
+      println(client.diagnostics)
+      assert(result.getStatusCode == StatusCode.OK, "the server reported the execution was not successful")
+      assert(os.exists(os.Path(path) / "random.txt"), "the main class was not ran.")
+      // assert(result.getOriginId == "run", "the server did not set the response origin id") bsp still didn't release
+      // functionality for this
+    }
+
+    test("Testing the run request with parameters - status code OK") {
+      val params = new RunParams(random)
+      params.setOriginId("run")
+      params.setArguments(List("MILL", "BSP").asJava)
+      val result = server.buildTargetRun(params).get
+      assert(result.getStatusCode == StatusCode.OK, "the server reported the execution was not successful.")
+      assert(os.exists(os.Path(path) / "random.txt"), "the main class was not ran.")
+      // assert(result.getOriginId == "run", "the server did not set the response origin id") bsp still didn't release
+      // functionality for this
+
+      val file = Source.fromFile(path + "random.txt")
+      val lines = file.getLines().toSeq
+      assert(lines.length == 2, "the main class did not execute correctly")
+      assert(lines.head == "MILL\n", "wrong execution")
+      assert(lines(1) == "BSP\n", "wrong execution")
+      file.close()
+    }
+
+    test("Testing the run request with parameters - status code ERROR") {
+      val params = new RunParams(random)
+      params.setOriginId("run")
+      params.setArguments(List("argument").asJava)
+      val result = server.buildTargetRun(params).get
+      assert(result.getStatusCode == StatusCode.ERROR, "the server reported the execution went ok.")
+      // assert(result.getOriginId == "run", "the server did not set the response origin id") bsp still didn't release
+      // functionality for this
+    }
 
 
 }
