@@ -1,14 +1,13 @@
+package build_client
+
 import java.io.{File, FileWriter, InputStream, OutputStream, PrintWriter}
 import java.util
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
-
-import build_client.TestBuildClient
 import ch.epfl.scala.bsp4j._
 import org.eclipse.lsp4j.jsonrpc.Launcher
 import play.api.libs.json._
 import scopt.OParser
-
 import scala.collection.JavaConverters._
 import scala.io.Source
 
@@ -139,6 +138,7 @@ object MainBuildClient extends App {
 
     case "build-targets" =>
       for (target <- allTargets) {
+        if (target.getLanguageIds.asScala.isEmpty)
         println(Console.WHITE + "Target: " + target + " \n")
       }
 
@@ -164,22 +164,48 @@ object MainBuildClient extends App {
     case "test" =>
       if (canTest) {
         for (testTarget <- canTestTargets) {
-          println("TestResult: " + test(testTarget).get())
-          assertTestResult(test(testTarget).get())
+          println("Verify if test target.")
+          if (List("main.test", "scalalib.test", "integration.test", "scalajslib.test").contains(testTarget.getDisplayName)) {
+            println("Send test request")
+            println("TestResult: " + test(testTarget).get())
+            assertTestResult(test(testTarget).get())
+          }
         }
         println(Console.WHITE + "Testing OK")
       } else println(Console.WHITE + "Your server does not have test capabilities")
 
     case "scala-main" =>
-      val params = new ScalaMainClassesParams(allTargets.map(target => target.getId).asJava)
-      println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaMainClasses(params).get)
+      for (target <- allTargets) {
+        val params = new ScalaMainClassesParams(List(target.getId).asJava)
+        val res = buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaMainClasses(params).get
+        if (res.getItems.asScala.exists(item => item.getClasses.asScala.nonEmpty)) {
+          println("Target: " + target.getId + " has main classes: ")
+          for (item <- res.getItems.asScala) {
+            println(item.getClasses)
+          }
+        }
+      }
+      println("Scala Main classes OK")
+
     case "scala-test" =>
-      val params = new ScalaTestClassesParams(allTargets.map(target => target.getId).asJava)
-      println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaTestClasses(params).get)
+      for (target <- allTargets) {
+        val params = new ScalaTestClassesParams(List(target.getId).asJava)
+        val res = buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalaTestClasses(params).get
+        if (res.getItems.asScala.exists(item => item.getClasses.asScala.nonEmpty)) {
+          println("Target: " + target.getId + " has test classes: ")
+          for (item <- res.getItems.asScala) {
+            println(item.getClasses)
+          }
+        }
+      }
+      println("Scala Test classes OK")
+
     case "clean-cache" =>
       for (cleanTarget <- allTargets) {
-        assertCleanCacheResult(cleanCache(cleanTarget).get)
+        if (!cleanTarget.getDisplayName.contains("root")) assertCleanCacheResult(cleanCache(cleanTarget).get)
       }
+      //println("Progress: " + build_client.taskProgresses)
+      println("Show messages: " + build_client.showMessages)
       println(Console.WHITE + "Clean cache OK")
 
     case "dependencies" =>
@@ -195,6 +221,13 @@ object MainBuildClient extends App {
       println(buildServer.buildTargetInverseSources(new InverseSourcesParams(new TextDocumentIdentifier(
         "file:///home/alexandra/mill/scratch/foo/src/FooMain.scala"
       ))).get)
+
+    case "resources" =>
+      for (target <- allTargets) {
+        if (target.getId.getUri.contains("moduledefs")) println(buildServer.buildTargetResources(
+          new ResourcesParams(List(target.getId).asJava)
+        ).get)
+      }
 
     case "scalac-options" =>
       println(buildServer.asInstanceOf[BuildServer with ScalaBuildServer].buildTargetScalacOptions(
@@ -352,6 +385,7 @@ object MainBuildClient extends App {
   def test(testTarget: BuildTarget): CompletableFuture[TestResult] = {
     val testParams = new TestParams(Collections.singletonList(testTarget.getId))
     testParams.setOriginId(uniqueTargetid.toString)
+    testParams.setArguments(List("tests.BspTests").asJava)
     buildServer.buildTargetTest(testParams)
   }
 
