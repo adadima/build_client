@@ -2,14 +2,17 @@ package tests
 
 import java.io.{File, PrintWriter}
 import java.util.concurrent.ExecutionException
+
 import build_client.TestBuildClient
 import ch.epfl.scala.bsp4j._
 import org.eclipse.lsp4j.jsonrpc.Launcher
 import org.scalatest.{BeforeAndAfterEach, FunSuite}
 import build_client.BspServer
 import com.google.gson.JsonObject
+import play.api.libs.json.{JsString, Json}
 
 import scala.collection.JavaConverters._
+import scala.io.Source
 
 trait MillBuildServerTest extends FunSuite with BeforeAndAfterEach {
   /*
@@ -38,7 +41,7 @@ trait MillBuildServerTest extends FunSuite with BeforeAndAfterEach {
      */
   var client: TestBuildClient = _
   def path : String
-  def serverStartCommand : Array[String]
+  var serverStartCommand : Array[String] = _
   var server: BuildServer with ScalaBuildServer = _
 
   override def afterEach: Unit = {
@@ -48,9 +51,14 @@ trait MillBuildServerTest extends FunSuite with BeforeAndAfterEach {
 
   override def beforeEach: Unit = {
     client = new TestBuildClient
+    val connectionSource = Source.fromFile((os.Path(path) / ".bsp" / "mill.json").toIO)
+    serverStartCommand = (Json.parse(connectionSource.mkString) \ "argv").
+                          as[Array[JsString]].
+                          map(jsString => jsString.as[String])
+    connectionSource.close()
+
     server = establishServerConnection(serverStartCommand).asInstanceOf[BuildServer with ScalaBuildServer]
     initializeServer(server)
-    println("After initialize")
     server.onBuildInitialized()
     server.buildTargetCleanCache(new CleanCacheParams(
       server.workspaceBuildTargets.get.getTargets.asScala.map(t => t.getId).asJava)
@@ -216,5 +224,4 @@ trait MillBuildServerTest extends FunSuite with BeforeAndAfterEach {
     server.buildShutdown()
     server.onBuildExit()
   }
-
 }

@@ -7,16 +7,7 @@ import scala.io.Source
 
 class TestMillExercise extends MillBuildServerTest {
 
-    override def path = "/home/alexandra/mill_exercise/"
-    override def serverStartCommand = Array(
-      "java",
-      "-DMILL_CLASSPATH=/home/alexandra/mill-release",
-      "-DMILL_VERSION=0.5.0-59-e1e1fb-DIRTY1e497afd",
-      "-Djna.nosys=true",
-      "-cp",
-      "/home/alexandra/mill-release",
-      "mill.MillMain",
-      "mill.contrib.BSP/start")
+    override def path = "/Users/adadima/mill_exercise/"
     val mill_exercise = new BuildTargetIdentifier(getUri("mill_exercise/"))
     val test = new BuildTargetIdentifier(getUri("mill_exercise/mill_exercise.test"))
     val random = new BuildTargetIdentifier(getUri("random/"))
@@ -131,9 +122,8 @@ class TestMillExercise extends MillBuildServerTest {
       compileParams.setOriginId("10")
       compileParams.setArguments(List("-Ywarn-unused").asJava)
       val result = server.buildTargetCompile(compileParams).get
-
       assertPublishDiagnostics(random, DiagnosticSeverity.WARNING,
-          getUri("random/src/main/scala/RandomClass.scala"), 2, "10")
+          getUri("random/src/main/scala/RandomClass.scala"), 1, "10")
       assertPublishDiagnostics(random, DiagnosticSeverity.INFORMATION,
           getUri("random/"), 1, "10"
       )
@@ -168,7 +158,7 @@ class TestMillExercise extends MillBuildServerTest {
                     item.getTarget,
                     (item.getClasses.asScala.head.getClassName, item.getClasses.asScala.head.getJvmOptions.asScala)
         )).toMap
-      assert(expectedClassesArgs == actualClassesArgs, "Main classes and fork arguments were not computed" +
+      assert(expectedClassesArgs == actualClassesArgs, "Main classes and fork arguments were not computed " +
         "correctly.")
       assert(result.getItems.asScala.filter(item => item.getTarget == foo).head.getClasses.isEmpty,
       "module foo has no main classes")
@@ -178,12 +168,12 @@ class TestMillExercise extends MillBuildServerTest {
       val result1 = server.buildTargetCleanCache(new CleanCacheParams(List(invalidTarget).asJava)).get
       assert(!result1.getCleaned, "the invalid target appears to have been cleaned - this is not" +
         "k since the target corresponds to a module that doesn't exist")
-      assert(result1.getMessage.contains("clean Cannot resolve build. Try `mill resolve _` to see what's available."),
+      assert(result1.getMessage.contains("Target build could not be cleaned"),
       "the error message was not set correctly")
 
       val result2 = server.buildTargetCleanCache(new CleanCacheParams(List(foo).asJava)).get
       assert(result2.getCleaned, "the server reported that foo was not cleaned.")
-      assert(result2.getMessage.contains("[1/1] clean"), "the success massage was not displayed correctly")
+      assert(result2.getMessage.contains("foo cleaned"), "the success massage was not displayed correctly")
     }
 
     test("Testing the run request without parameters - status code OK") {
@@ -256,14 +246,14 @@ class TestMillExercise extends MillBuildServerTest {
       val params = new TestParams(List(random_test).asJava)
       params.setOriginId("random-test")
       val result = server.buildTargetTest(params).get
-      assert(client.taskStarts.count(not => not.getDataKind == "test-started") == 11,
+      assert(client.taskStarts.count(not => not.getDataKind == TaskDataKind.TEST_START) == 11,
         "wrong number of task start notifications")
-      assert(client.taskFinishes.count(not => not.getDataKind == "test-finished") == 11,
+      assert(client.taskFinishes.count(not => not.getDataKind == TaskDataKind.TEST_FINISH) == 11,
         "wrong number of task finish notifications")
       val testReport = client.taskFinishes.filter(finish => finish.getDataKind == "test-report").head.getData.
         asInstanceOf[JsonObject]
       assertTestReport(testReport, random_test, 2, 6, 3, 0, 0)
-      assert(result.getStatusCode == StatusCode.ERROR, "the server reported the execution was not error.")
+      assert(result.getStatusCode == StatusCode.ERROR, "the server reported the execution was error.")
       assert(result.getOriginId == "random-test", "the server did not set the response origin id")
       assertProgressNotifications("random.test.testLocal")
     }
@@ -280,9 +270,9 @@ class TestMillExercise extends MillBuildServerTest {
       params.setData(scalaParams)
       params.setDataKind("scala-test")
       val result = server.buildTargetTest(params).get
-      assert(client.taskStarts.count(not => not.getDataKind == "test-started") == 2,
+      assert(client.taskStarts.count(not => not.getDataKind == TaskDataKind.TEST_START) == 2,
         "wrong number of task start notifications")
-      assert(client.taskFinishes.count(not => not.getDataKind == "test-finished") == 2,
+      assert(client.taskFinishes.count(not => not.getDataKind == TaskDataKind.TEST_FINISH) == 2,
         "wrong number of task finish notifications")
       val testReport = client.taskFinishes.filter(finish => finish.getDataKind == "test-report").head.getData.
         asInstanceOf[JsonObject]
@@ -305,9 +295,9 @@ class TestMillExercise extends MillBuildServerTest {
       params.setData(scalaParams)
       params.setDataKind("scala-test")
       val result = server.buildTargetTest(params).get
-      assert(client.taskStarts.count(not => not.getDataKind == "test-started") == 4,
+      assert(client.taskStarts.count(not => not.getDataKind == TaskDataKind.TEST_START) == 4,
         "wrong number of task start notifications")
-      assert(client.taskFinishes.count(not => not.getDataKind == "test-finished") == 4,
+      assert(client.taskFinishes.count(not => not.getDataKind == TaskDataKind.TEST_FINISH) == 4,
         "wrong number of task finish notifications")
       val testReport = client.taskFinishes.filter(finish => finish.getDataKind == "test-report").head.getData.
         asInstanceOf[JsonObject]
